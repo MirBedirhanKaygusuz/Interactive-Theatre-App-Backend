@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>İnteraktif Tiyatro - Admin Paneli</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>İnteraktif Tiyatro Admin Paneli</h1>
+            <div class="connection-info">
+                Bağlantı: <span id="connection-status" class="status-disconnected">Bağlanıyor...</span>
+            </div>
+        </header>
+        
+        <div class="main-content">
+            <div class="dashboard">
+                <div class="card">
+                    <h2>İzleyici İstatistikleri</h2>
+                    <div class="stat-value">
+                        <span id="total-audiences">0</span>
+                        <span class="stat-label">Toplam İzleyici</span>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>Soru Durumu</h2>
+                    <div class="status-wrapper">
+                        <span id="question-status" class="status-inactive">Kapalı</span>
+                    </div>
+                    <div class="button-group">
+                        <button id="open-question-btn" class="primary-btn">Soru Aç</button>
+                        <button id="close-question-btn" class="secondary-btn" disabled>Soru Kapat</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="hands-list-section">
+                <div class="section-header">
+                    <h2>El Kaldıranlar</h2>
+                    <button id="select-random-btn" class="action-btn" disabled>Rastgele Seç</button>
+                </div>
+                <div id="raised-hands-list" class="hands-list">
+                    <div class="empty-list">Henüz el kaldıran yok</div>
+                </div>
+            </div>
+            
+            <div class="activity-section">
+                <h2>Aktivite Logu</h2>
+                <div id="activity-log" class="activity-log"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/admin.js"></script>
+</body>
+</html>
