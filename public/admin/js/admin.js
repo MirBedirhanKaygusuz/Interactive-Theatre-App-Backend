@@ -1,4 +1,4 @@
-// public/admin/js/admin.js
+// public/admin/js/admin.js - WebRTC Destekli
 document.addEventListener('DOMContentLoaded', function() {
     // DOM Elementleri
     const connectionStatus = document.getElementById('connection-status');
@@ -10,6 +10,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const selectRandomBtn = document.getElementById('select-random-btn');
     const activityLog = document.getElementById('activity-log');
     
+    // Video ve yayın elementleri
+    const remoteVideo = document.getElementById('remote-video');
+    const nobroadcastEl = document.getElementById('no-broadcast');
+    const broadcastStatus = document.getElementById('broadcast-status');
+    const broadcastSeat = document.getElementById('broadcast-seat');
+    const stopBroadcastBtn = document.getElementById('stop-broadcast-btn');
+    
+    // WebRTC bileşenleri
+    let peerConnection = null;
+    let currentBroadcastSeat = null;
+    
     // Socket.io bağlantısı
     const socket = io(window.location.origin, {
       query: { type: 'admin' }
@@ -17,6 +28,86 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Durum değişkenleri
     let questionActive = false;
+    
+    // WebRTC yapılandırma
+    const rtcConfig = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
+    };
+    
+    // WebRTC PeerConnection oluştur
+    const createPeerConnection = () => {
+      if (peerConnection) {
+        peerConnection.close();
+      }
+      
+      peerConnection = new RTCPeerConnection(rtcConfig);
+      
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate && currentBroadcastSeat) {
+          socket.emit('rtc-ice-candidate', {
+            seatNumber: currentBroadcastSeat,
+            candidate: event.candidate
+          });
+        }
+      };
+      
+      peerConnection.ontrack = (event) => {
+        if (remoteVideo.srcObject !== event.streams[0]) {
+          remoteVideo.srcObject = event.streams[0];
+          addLogEntry(`${currentBroadcastSeat} - Video akışı alındı`);
+          
+          // Yayın başladı - arayüzü güncelle
+          nobroadcastEl.style.display = 'none';
+          remoteVideo.style.display = 'block';
+          broadcastStatus.textContent = 'Canlı Yayında';
+          broadcastStatus.classList.add('live');
+          stopBroadcastBtn.disabled = false;
+        }
+      };
+      
+      peerConnection.oniceconnectionstatechange = () => {
+        addLogEntry(`ICE Bağlantı Durumu: ${peerConnection.iceConnectionState}`);
+        
+        if (peerConnection.iceConnectionState === 'disconnected' || 
+            peerConnection.iceConnectionState === 'failed' || 
+            peerConnection.iceConnectionState === 'closed') {
+          stopBroadcast();
+        }
+      };
+      
+      return peerConnection;
+    };
+    
+    // Yayını durdur
+    const stopBroadcast = () => {
+      if (remoteVideo.srcObject) {
+        remoteVideo.srcObject.getTracks().forEach(track => track.stop());
+        remoteVideo.srcObject = null;
+      }
+      
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      
+      // Arayüzü güncelle
+      nobroadcastEl.style.display = 'flex';
+      remoteVideo.style.display = 'none';
+      broadcastStatus.textContent = 'Yayın bekleniyor';
+      broadcastStatus.classList.remove('live');
+      broadcastSeat.textContent = '';
+      stopBroadcastBtn.disabled = true;
+      
+      // Sunucuya bildir
+      if (currentBroadcastSeat) {
+        socket.emit('admin-stop-broadcast', { seatNumber: currentBroadcastSeat });
+        addLogEntry(`${currentBroadcastSeat} - Yayın durduruldu`);
+        currentBroadcastSeat = null;
+      }
+    };
     
     // Aktivite logu ekle
     const addLogEntry = (message) => {
@@ -107,6 +198,7 @@ document.addEventListener('DOMContentLoaded', function() {
       connectionStatus.textContent = 'Bağlantı Kesildi';
       connectionStatus.className = 'status-disconnected';
       addLogEntry('Sunucu bağlantısı kesildi');
+      stopBroadcast();
     });
     
     socket.on('state-update', (data) => {
@@ -115,6 +207,23 @@ document.addEventListener('DOMContentLoaded', function() {
       updateQuestionStatus(data.questionActive);
       
       addLogEntry(`Durum güncellendi: ${data.totalAudiences} izleyici, ${(data.raisedHands || []).length} el kaldıran`);
+      
+      // Aktif yayınları güncelle
+      if (data.broadcasts && data.broadcasts.length > 0) {
+        const activeBroadcast = data.broadcasts[0]; // Şimdilik tek yayını destekleyelim
+        
+        currentBroadcastSeat = activeBroadcast.seatNumber;
+        broadcastSeat.textContent = `Koltuk: ${activeBroadcast.seatNumber}`;
+        
+        if (activeBroadcast.status === 'live') {
+          broadcastStatus.textContent = 'Canlı Yayında';
+          broadcastStatus.classList.add('live');
+          stopBroadcastBtn.disabled = false;
+        } else {
+          broadcastStatus.textContent = 'Yayın bekleniyor';
+          broadcastStatus.classList.remove('live');
+        }
+      }
     });
     
     socket.on('audience-registered', (data) => {
@@ -134,6 +243,70 @@ document.addEventListener('DOMContentLoaded', function() {
     
     socket.on('audience-selected', (data) => {
       addLogEntry(`${data.seatNumber} numaralı izleyici seçildi`);
+      
+      // Yayın arayüzünü hazırla
+      currentBroadcastSeat = data.seatNumber;
+      broadcastSeat.textContent = `Koltuk: ${data.seatNumber}`;
+      broadcastStatus.textContent = 'Yayın bekleniyor';
+      broadcastStatus.classList.remove('live');
+      stopBroadcastBtn.disabled = false;
+    });
+    
+    // WebRTC olayları
+    socket.on('rtc-offer', (data) => {
+      const { seatNumber, offer } = data;
+      
+      addLogEntry(`${seatNumber} - Offer alındı`);
+      
+      // PeerConnection oluştur ve offer'ı set et
+      createPeerConnection();
+      
+      peerConnection.setRemoteDescription(new RTCSessionDescription(offer))
+        .then(() => peerConnection.createAnswer())
+        .then(answer => peerConnection.setLocalDescription(answer))
+        .then(() => {
+          // Answer'ı gönder
+          socket.emit('rtc-answer', {
+            seatNumber,
+            answer: peerConnection.localDescription
+          });
+          
+          addLogEntry(`${seatNumber} - Answer gönderildi`);
+        })
+        .catch(error => {
+          console.error('WebRTC answer oluşturma hatası:', error);
+          addLogEntry(`${seatNumber} - WebRTC hatası: ${error.message}`);
+        });
+    });
+    
+    socket.on('rtc-ice-candidate', (data) => {
+      const { seatNumber, candidate } = data;
+      
+      if (peerConnection && candidate) {
+        peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
+          .catch(error => {
+            console.error('ICE candidate hatası:', error);
+            addLogEntry(`${seatNumber} - ICE hatası: ${error.message}`);
+          });
+      }
+    });
+    
+    socket.on('broadcast-status-update', (data) => {
+      if (data.broadcasts && data.broadcasts.length > 0) {
+        // Şimdilik tek yayına odaklanalım
+        const broadcast = data.broadcasts[0];
+        
+        if (broadcast.status === 'live') {
+          broadcastStatus.textContent = 'Canlı Yayında';
+          broadcastStatus.classList.add('live');
+        } else {
+          broadcastStatus.textContent = 'Yayın bekleniyor';
+          broadcastStatus.classList.remove('live');
+        }
+      } else {
+        // Aktif yayın yok
+        stopBroadcast();
+      }
     });
     
     // Buton olayları
@@ -152,6 +325,14 @@ document.addEventListener('DOMContentLoaded', function() {
       addLogEntry('Rastgele izleyici seçiliyor...');
     });
     
+    stopBroadcastBtn.addEventListener('click', () => {
+      stopBroadcast();
+    });
+    
     // Sayfa yüklendiğinde
     addLogEntry('Admin paneli yüklendi');
+    
+    // Başlangıçta yayın arayüzünü ayarla
+    nobroadcastEl.style.display = 'flex';
+    remoteVideo.style.display = 'none';
   });

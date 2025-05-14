@@ -35,6 +35,24 @@
                         <button id="close-question-btn" class="secondary-btn" disabled>Soru Kapat</button>
                     </div>
                 </div>
+                
+                <!-- Canlı Yayın Bölümü -->
+                <div class="card broadcast-card">
+                    <h2>Canlı Yayın</h2>
+                    <div id="video-container">
+                        <video id="remote-video" autoplay playsinline></video>
+                        <div id="no-broadcast" class="broadcast-placeholder">
+                            <p>Aktif yayın yok</p>
+                        </div>
+                    </div>
+                    <div class="broadcast-info">
+                        <div id="broadcast-status">Yayın bekleniyor</div>
+                        <div id="broadcast-seat"></div>
+                    </div>
+                    <div class="button-group">
+                        <button id="stop-broadcast-btn" class="secondary-btn" disabled>Yayını Durdur</button>
+                    </div>
+                </div>
             </div>
             
             <div class="hands-list-section">

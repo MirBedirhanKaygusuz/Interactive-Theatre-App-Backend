@@ -1,12 +1,15 @@
-// server.js
+// server.js - WebRTC destekli
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
-const fs = require('fs');
+const cors = require('cors');
 
 // Express uygulaması
 const app = express();
+app.use(cors());
+app.use(express.static(path.join(__dirname, 'public')));
+
 const server = http.createServer(app);
 
 // CORS ayarlarıyla Socket.io
@@ -17,12 +20,9 @@ const io = socketIo(server, {
   }
 });
 
-// Statik dosyalar için klasör
-app.use(express.static(path.join(__dirname, 'public')));
-
 // Ana sayfa
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.send('İnteraktif Tiyatro Sunucusu Çalışıyor');
 });
 
 // Admin paneli
@@ -34,16 +34,15 @@ app.get('/admin', (req, res) => {
 const appState = {
   audiences: {},        // Tüm bağlı izleyiciler
   raisedHands: [],      // El kaldıran izleyiciler
-  questionActive: false // Aktif soru durumu
+  questionActive: false, // Aktif soru durumu
+  broadcasts: {},       // Aktif canlı yayınlar
+  webrtcPeers: {}       // WebRTC bağlantıları
 };
 
 // Detaylı loglama için yardımcı fonksiyon
 const log = (message) => {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${message}`);
-  
-  // İsteğe bağlı: Logları dosyaya da yazabilirsiniz
-  // fs.appendFileSync('./logs.txt', `[${timestamp}] ${message}\n`);
 };
 
 // Socket bağlantılarını yönet
@@ -59,7 +58,11 @@ io.on('connection', (socket) => {
     socket.emit('state-update', {
       totalAudiences: Object.keys(appState.audiences).length,
       raisedHands: appState.raisedHands,
-      questionActive: appState.questionActive
+      questionActive: appState.questionActive,
+      broadcasts: Object.keys(appState.broadcasts).map(seatNumber => ({
+        seatNumber,
+        status: appState.broadcasts[seatNumber].status
+      }))
     });
   }
   
@@ -168,6 +171,21 @@ io.on('connection', (socket) => {
       
       // Admin'e bildir
       io.to('admin').emit('audience-selected', { seatNumber });
+      
+      // Broadcast kaydı başlat
+      appState.broadcasts[seatNumber] = {
+        socketId: targetSocketId,
+        status: 'waiting',
+        startedAt: new Date()
+      };
+      
+      // Admin'e yayın durumunu bildir
+      io.to('admin').emit('broadcast-status-update', {
+        broadcasts: Object.keys(appState.broadcasts).map(seat => ({
+          seatNumber: seat,
+          status: appState.broadcasts[seat].status
+        }))
+      });
     } else {
       log(`Seçilecek izleyici bulunamadı: ${seatNumber}`);
     }
@@ -191,6 +209,128 @@ io.on('connection', (socket) => {
     
     // Admin'e bildir
     io.to('admin').emit('audience-selected', { seatNumber: selected.seatNumber });
+    
+    // Broadcast kaydı başlat
+    appState.broadcasts[selected.seatNumber] = {
+      socketId: selected.id,
+      status: 'waiting',
+      startedAt: new Date()
+    };
+    
+    // Admin'e yayın durumunu bildir
+    io.to('admin').emit('broadcast-status-update', {
+      broadcasts: Object.keys(appState.broadcasts).map(seat => ({
+        seatNumber: seat,
+        status: appState.broadcasts[seat].status
+      }))
+    });
+  });
+  
+  // WebRTC - Offer gönderme (izleyiciden)
+  socket.on('rtc-offer', (data) => {
+    const { seatNumber, offer } = data;
+    
+    log(`WebRTC offer alındı: ${seatNumber}`);
+    
+    // Broadcast durumunu güncelle
+    if (appState.broadcasts[seatNumber]) {
+      appState.broadcasts[seatNumber].status = 'live';
+      appState.broadcasts[seatNumber].offer = offer;
+      
+      // Admin'e offer'ı gönder
+      io.to('admin').emit('rtc-offer', {
+        seatNumber,
+        offer
+      });
+      
+      // Admin'e yayın durumunu bildir
+      io.to('admin').emit('broadcast-status-update', {
+        broadcasts: Object.keys(appState.broadcasts).map(seat => ({
+          seatNumber: seat,
+          status: appState.broadcasts[seat].status
+        }))
+      });
+    }
+  });
+  
+  // WebRTC - Answer gönderme (admin'den)
+  socket.on('rtc-answer', (data) => {
+    const { seatNumber, answer } = data;
+    
+    log(`WebRTC answer alındı (admin): ${seatNumber}`);
+    
+    // Answer'ı izleyiciye ilet
+    if (appState.broadcasts[seatNumber]) {
+      const targetSocketId = appState.broadcasts[seatNumber].socketId;
+      io.to(targetSocketId).emit('rtc-answer', { answer });
+    }
+  });
+  
+  // WebRTC - ICE Candidate gönderme
+  socket.on('rtc-ice-candidate', (data) => {
+    const { seatNumber, candidate } = data;
+    
+    // Admin'den geliyorsa, izleyiciye ilet
+    if (socket.handshake.query && socket.handshake.query.type === 'admin') {
+      if (appState.broadcasts[seatNumber]) {
+        const targetSocketId = appState.broadcasts[seatNumber].socketId;
+        io.to(targetSocketId).emit('rtc-ice-candidate', { candidate });
+      }
+    } 
+    // İzleyiciden geliyorsa, admin'e ilet
+    else {
+      const audience = appState.audiences[socket.id];
+      if (audience) {
+        io.to('admin').emit('rtc-ice-candidate', {
+          seatNumber: audience.seatNumber,
+          candidate
+        });
+      }
+    }
+  });
+  
+  // Yayını durdurma
+  socket.on('stop-broadcasting', (data) => {
+    const { seatNumber } = data;
+    
+    log(`Yayın durduruldu: ${seatNumber}`);
+    
+    // Broadcast kaydını sil
+    if (appState.broadcasts[seatNumber]) {
+      delete appState.broadcasts[seatNumber];
+      
+      // Admin'e yayın durumunu bildir
+      io.to('admin').emit('broadcast-status-update', {
+        broadcasts: Object.keys(appState.broadcasts).map(seat => ({
+          seatNumber: seat,
+          status: appState.broadcasts[seat].status
+        }))
+      });
+    }
+  });
+  
+  // Admin: Yayını durdurma isteği
+  socket.on('admin-stop-broadcast', (data) => {
+    const { seatNumber } = data;
+    
+    log(`Admin yayını durdurdu: ${seatNumber}`);
+    
+    // İzleyiciye yayını durdurma isteği gönder
+    if (appState.broadcasts[seatNumber]) {
+      const targetSocketId = appState.broadcasts[seatNumber].socketId;
+      io.to(targetSocketId).emit('stop-broadcasting');
+      
+      // Broadcast kaydını sil
+      delete appState.broadcasts[seatNumber];
+      
+      // Admin'e yayın durumunu bildir
+      io.to('admin').emit('broadcast-status-update', {
+        broadcasts: Object.keys(appState.broadcasts).map(seat => ({
+          seatNumber: seat,
+          status: appState.broadcasts[seat].status
+        }))
+      });
+    }
   });
   
   // Bağlantı kesildiğinde
@@ -207,6 +347,23 @@ io.on('connection', (socket) => {
       appState.raisedHands = appState.raisedHands.filter(
         hand => hand.id !== socket.id
       );
+      
+      // Eğer bu izleyicinin aktif bir yayını varsa, onu da kaldır
+      const broadcastSeatNumber = Object.keys(appState.broadcasts).find(
+        seat => appState.broadcasts[seat].socketId === socket.id
+      );
+      
+      if (broadcastSeatNumber) {
+        delete appState.broadcasts[broadcastSeatNumber];
+        
+        // Admin'e yayın durumunu bildir
+        io.to('admin').emit('broadcast-status-update', {
+          broadcasts: Object.keys(appState.broadcasts).map(seat => ({
+            seatNumber: seat,
+            status: appState.broadcasts[seat].status
+          }))
+        });
+      }
       
       // Admin'e güncelleme gönder
       io.to('admin').emit('state-update', {

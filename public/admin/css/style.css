@@ -206,8 +206,68 @@ button:disabled {
     margin-right: 8px;
 }
 
+/* Canlı yayın bölümü için stiller */
+.broadcast-card {
+    grid-column: span 2;
+}
+
+#video-container {
+    width: 100%;
+    height: 300px;
+    background-color: #000;
+    margin-bottom: 15px;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+
+#remote-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.broadcast-placeholder {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #333;
+    color: #fff;
+    font-size: 18px;
+}
+
+.broadcast-info {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 15px;
+    padding: 10px;
+    background-color: #f0f0f0;
+    border-radius: 4px;
+}
+
+#broadcast-status {
+    font-weight: bold;
+}
+
+#broadcast-status.live {
+    color: #4CAF50;
+}
+
+#broadcast-seat {
+    color: #555;
+}
+
 @media (max-width: 768px) {
     .main-content {
         grid-template-columns: 1fr;
+    }
+    
+    .broadcast-card {
+        grid-column: span 1;
     }
 }
